@@ -1,0 +1,176 @@
+// ==UserScript==
+// @name         Add block zipcode
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Automate adding zipcode to Shipping Restrictions
+// @author       Peter
+// @match        https://a.vapewholesaleusa.com/admin_SqwOPu4tsRle/amasty_shiprestriction/rule/edit/id/333/key/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    // Helper function to create delays
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Function to click the Add button
+    async function clickAddButton() {
+        const addButton = document.querySelector('#conditions__1--2__children .rule-param-add');
+        if (addButton) {
+            addButton.click();
+            await delay(1000); // Wait after clicking
+        }
+    }
+
+    // Function to select zipcode option from dropdown
+    async function selectAddressOption() {
+        const select = document.querySelector('#conditions__1--2__new_child');
+        if (select) {
+            // Set value to the zipcode condition option
+            select.value = 'Amasty\\Conditions\\Model\\Rule\\Condition\\Address|city';
+            // Trigger change event
+            select.dispatchEvent(new Event('change'));
+            await delay(1000); // Wait after selection
+        }
+    }
+
+    async function fillZipcode(zipcode, i) {
+        const input = document.querySelector(`#conditions__1--2--${304 + i}__value`);
+        await input.setValue(zipcode);
+        await input.dispatchEvent(new Event('change'));
+        await delay(1000); // Wait after filling zipcode
+    }
+
+    // Add button to trigger the automation
+    async function addAutomationButton() {
+        const button = document.createElement('button');
+        button.textContent = 'Add ZIP codes';
+        button.style.position = 'fixed';
+        button.style.top = '10px';
+        button.style.right = '10px';
+        button.style.zIndex = '9999';
+
+        button.addEventListener('click', async () => {
+            // Using for...of instead of forEach for sequential execution
+            for (let i = 0; i < zipcodelist.length; i++) {
+                let zipcode = zipcodelist[i];
+                await clickAddButton();
+                await selectAddressOption();
+                await fillZipcode(zipcode, i);
+                await delay(500); // Additional delay between iterations
+            }
+        });
+
+        document.body.appendChild(button);
+    }
+
+    async function addOperatorUpdateButton() {
+        const button = document.createElement('button');
+        button.textContent = 'OperatorUpdate';
+        button.style.position = 'fixed';
+        button.style.top = '10px';
+        button.style.right = '100px';
+        button.style.zIndex = '9999';
+
+        button.addEventListener('click', async () => {
+            // Using for...of instead of forEach for sequential execution
+            for (let i = 0; i < 304; i++) {
+                let zipcode = zipcodelist[i];
+                await operatorUpdate(i)
+                await delay(500); // Additional delay between iterations
+            }
+        });
+    }
+
+    async function operatorUpdate(i) {
+        const input = document.querySelector(`#conditions__1--2--${1 + i}__operator`);
+        await input.setValue("{}");
+        await input.dispatchEvent(new Event('change'));
+        await delay(1000); // Wait after filling zipcode
+    }
+
+    //conditions__1--2--5__operator
+    // Initialize
+    window.addEventListener('load', async () => {
+        await addAutomationButton();
+        await addOperatorUpdateButton();
+    });
+
+    let zipcodelist = [
+       "Aventura",
+  "Bal Harbour",
+  "Bay Harbor Islands",
+  "Biscayne Park",
+  "Boca Raton",
+  "Boynton Beach",
+  "Coconut Creek",
+  "Cooper City",
+  "Coral Gables",
+  "Coral Springs",
+  "Cutler Bay",
+  "Dania Beach",
+  "Davie",
+  "Deerfield Beach",
+  "Delray Beach",
+  "Doral",
+  "El Portal",
+  "Florida City",
+  "Fort Lauderdale",
+  "Golden Beach",
+  "Greenacres",
+  "Hallandale Beach",
+  "Hialeah",
+  "Hialeah Gardens",
+  "Highland Beach",
+  "Hollywood",
+  "Homestead",
+  "Indian Creek",
+  "Juno Beach",
+  "Jupiter",
+  "Key Biscayne",
+  "Lake Worth Beach",
+  "Lauderdale Lakes",
+  "Lauderhill",
+  "Lighthouse Point",
+  "Loxahatchee Groves",
+  "Margate",
+  "Medley",
+  "Miami",
+  "Miami Beach",
+  "Miami Gardens",
+  "Miami Lakes",
+  "Miami Shores",
+  "Miami Springs",
+  "North Bay Village",
+  "North Lauderdale",
+  "North Miami",
+  "North Miami Beach",
+  "Oakland Park",
+  "Ocean Ridge",
+  "Opa-locka",
+  "Palm Beach",
+  "Palm Beach Gardens",
+  "Palm Springs",
+  "Palmetto Bay",
+  "Parkland",
+  "Pembroke Pines",
+  "Pinecrest",
+  "Plantation",
+  "Pompano Beach",
+  "South Miami",
+  "Southwest Ranches",
+  "Sunny Isles Beach",
+  "Sunrise",
+  "Surfside",
+  "Sweetwater",
+  "Tamarac",
+  "Tequesta",
+  "Virginia Gardens",
+  "Wellington",
+  "West Miami",
+  "West Palm Beach",
+  "Weston",
+  "Wilton Manors"
+    ]
+})();
