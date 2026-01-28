@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Duoplane Address Form Prefill
 // @namespace    http://tampermonkey.net/
-// @version      0.2
+// @version      0.3
 // @description  Auto-fills shipping address form on Duoplane with address selection
 // @author       Peter
 // @match        https://app.duoplane.com/purchase_orders/*/shipping_address/edit
@@ -10,6 +10,12 @@
 
 (function () {
     'use strict';
+
+    // Cloudflare Worker proxy URL - update this after deploying your worker
+    const PROXY_URL = 'https://duoplane-proxy.info-ba2.workers.dev';
+
+    // Cached original address - captured once when the form loads
+    let cachedOriginalAddress = null;
 
     // Address configuration - add or modify addresses here
     const addresses = [
@@ -57,13 +63,156 @@
     }, 500);
 
     function getOrderNumber() {
-        const h1Element = document.querySelector('h1');
-        if (!h1Element) return '';
-        const match = h1Element.textContent.match(/Purchase\s+Order\s+([A-Za-z0-9-]+)/i);
-        return match ? match[1] : '';
+        // Try h1 first (Purchase Order page)
+        // const h1Element = document.querySelector('h1');
+        // if (h1Element) {
+        //     const match = h1Element.textContent.match(/Purchase\s+Order\s+([A-Za-z0-9-]+)/i);
+        //     if (match) return match[1];
+        // }
+
+        // Try h4 inside .controls.well (Shipping address section)
+        const h4Element = document.querySelector('.controls.well h4');
+        if (h4Element) {
+            const match = h4Element.textContent.match(/Order\s+(\d+)/i);
+            if (match) return match[1];
+        }
+
+        return '';
+    }
+
+    function getOriginalAddress() {
+        // Read address directly from form input fields
+        const getValue = (id) => {
+            const el = document.getElementById(id);
+            return el ? el.value || null : null;
+        };
+
+        const address = {
+            first_name: getValue('address_first_name'),
+            last_name: getValue('address_last_name'),
+            company_name: getValue('address_company_name'),
+            address_1: getValue('address_address_1'),
+            address_2: getValue('address_address_2'),
+            city: getValue('address_city'),
+            province: getValue('address_province'),
+            post_code: getValue('address_post_code'),
+            country: getValue('address_country'),
+            phone: getValue('address_phone'),
+            email: getValue('address_email')
+        };
+
+        console.log('[Duoplane Prefill] Extracted original address:', address);
+        return address;
+    }
+
+    async function getOrderId(orderNumber) {
+        const url = `${PROXY_URL}/orders?order_number=${orderNumber}`;
+        console.log('[Duoplane Prefill] Looking up order ID via proxy:', url);
+
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            console.log('[Duoplane Prefill] Order lookup response:', data);
+
+            if (data.order_id) {
+                console.log('[Duoplane Prefill] Found order_id:', data.order_id);
+                return data.order_id;
+            }
+            return null;
+        } catch (error) {
+            console.error('[Duoplane Prefill] Error:', error);
+            return null;
+        }
+    }
+
+    const COMMENT_USER = 'reship_original_address';
+
+    async function getComments(orderId) {
+        const url = `${PROXY_URL}/orders/${orderId}/comments`;
+        console.log('[Duoplane Prefill] Fetching comments:', url);
+
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            console.log('[Duoplane Prefill] Comments response:', data);
+            return data.comments || [];
+        } catch (error) {
+            console.error('[Duoplane Prefill] Failed to get comments:', error);
+            return [];
+        }
+    }
+
+    async function saveAddressComment(orderId, addressJson) {
+        const commentBody = JSON.stringify({ shipping_address: addressJson }, null, 4);
+
+        // Check for existing comment from our user
+        const comments = await getComments(orderId);
+        const existingComment = comments.find(c => c.commenter && c.commenter.full_name === COMMENT_USER);
+
+        if (existingComment) {
+            // Update existing comment
+            console.log('[Duoplane Prefill] Found existing comment, updating:', existingComment.id);
+            const url = `${PROXY_URL}/orders/${orderId}/comments/${existingComment.id}`;
+            try {
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment_body: commentBody })
+                });
+                const data = await response.json();
+                console.log('[Duoplane Prefill] Update comment response:', data);
+                return data.success === true;
+            } catch (error) {
+                console.error('[Duoplane Prefill] Failed to update comment:', error);
+                return false;
+            }
+        } else {
+            // Create new comment
+            console.log('[Duoplane Prefill] No existing comment, creating new one');
+            const url = `${PROXY_URL}/orders/${orderId}/comments`;
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment_body: commentBody })
+                });
+                const data = await response.json();
+                console.log('[Duoplane Prefill] Create comment response:', data);
+                return data.success === true;
+            } catch (error) {
+                console.error('[Duoplane Prefill] Failed to create comment:', error);
+                return false;
+            }
+        }
+    }
+
+    function showNotification(message, isSuccess) {
+        const notification = document.createElement('div');
+        notification.textContent = message;
+        notification.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 4px;
+            color: white;
+            font-size: 14px;
+            z-index: 10001;
+            background: ${isSuccess ? '#28a745' : '#dc3545'};
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        `;
+        document.body.appendChild(notification);
+
+        setTimeout(() => {
+            notification.remove();
+        }, 3000);
     }
 
     function showAddressSelector() {
+        // Capture original address ONCE when page loads
+        cachedOriginalAddress = getOriginalAddress();
+        console.log('[Duoplane Prefill] Cached original address:', cachedOriginalAddress);
+
         // Create container for address selector
         const container = document.createElement('div');
         container.id = 'address-selector-container';
@@ -136,8 +285,35 @@
         document.body.appendChild(container);
     }
 
-    function fillForm(address) {
+    async function fillForm(address) {
+        // Use the cached original address (captured when page loaded)
+        const originalAddress = cachedOriginalAddress;
         const orderNumber = getOrderNumber();
+
+        console.log('[Duoplane Prefill] Order Number:', orderNumber);
+        console.log('[Duoplane Prefill] Selected address:', address.label);
+
+        // Post comment with original address first
+        if (!originalAddress || !orderNumber) {
+            showNotification('Could not extract address or order number', false);
+            return;
+        }
+
+        // Look up the order ID from the order number
+        const orderId = await getOrderId(orderNumber);
+        if (!orderId) {
+            showNotification('Failed to find order ID', false);
+            return;
+        }
+
+        const success = await saveAddressComment(orderId, originalAddress);
+        if (!success) {
+            showNotification('Failed to save address comment', false);
+            return;
+        }
+
+        // Only fill the form after comment is successfully posted
+        showNotification('Original address saved as comment', true);
 
         // Get current last name and append order number
         const lastNameField = document.getElementById('address_last_name');
