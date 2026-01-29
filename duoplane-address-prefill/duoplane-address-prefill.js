@@ -73,8 +73,8 @@
         // Try h4 inside .controls.well (Shipping address section)
         const h4Element = document.querySelector('.controls.well h4');
         if (h4Element) {
-            const match = h4Element.textContent.match(/Order\s+(\d+)/i);
-            if (match) return match[1];
+            const match = h4Element.textContent.match(/Orders?\s+([^:]+):/i);
+            if (match) return match[1].trim();
         }
 
         return '';
