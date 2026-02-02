@@ -64,18 +64,18 @@
 
     function getOrderNumber() {
         // Try h1 first (Purchase Order page)
-        // const h1Element = document.querySelector('h1');
-        // if (h1Element) {
-        //     const match = h1Element.textContent.match(/Purchase\s+Order\s+([A-Za-z0-9-]+)/i);
-        //     if (match) return match[1];
-        // }
+        const h1Element = document.querySelector('h1');
+        if (h1Element) {
+            const match = h1Element.textContent.match(/Purchase\s+Order\s+([A-Za-z0-9-]+)/i);
+            if (match) return match[1];
+        }
 
         // Try h4 inside .controls.well (Shipping address section)
-        const h4Element = document.querySelector('.controls.well h4');
-        if (h4Element) {
-            const match = h4Element.textContent.match(/Orders?\s+([^:]+):/i);
-            if (match) return match[1].trim();
-        }
+        // const h4Element = document.querySelector('.controls.well h4');
+        // if (h4Element) {
+        //     const match = h4Element.textContent.match(/Orders?\s+([^:]+):/i);
+        //     if (match) return match[1].trim();
+        // }
 
         return '';
     }
