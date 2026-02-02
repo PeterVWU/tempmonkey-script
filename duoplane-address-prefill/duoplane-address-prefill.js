@@ -64,19 +64,28 @@
 
     function getOrderNumber() {
         // Try h1 first (Purchase Order page)
+        // const h1Element = document.querySelector('h1');
+        // if (h1Element) {
+        //     const match = h1Element.textContent.match(/Purchase\s+Order\s+([A-Za-z0-9-]+)/i);
+        //     if (match) return match[1];
+        // }
+
+        // Try h4 inside .controls.well (Shipping address section)
+        const h4Element = document.querySelector('.controls.well h4');
+        if (h4Element) {
+            const match = h4Element.textContent.match(/Orders?\s+([^:]+):/i);
+            if (match) return match[1].trim();
+        }
+
+        return '';
+    }
+
+    function getPurchaseOrderNumber() {
         const h1Element = document.querySelector('h1');
         if (h1Element) {
             const match = h1Element.textContent.match(/Purchase\s+Order\s+([A-Za-z0-9-]+)/i);
-            if (match) return match[1];
+            if (match) return match[1].trim();
         }
-
-        // Try h4 inside .controls.well (Shipping address section)
-        // const h4Element = document.querySelector('.controls.well h4');
-        // if (h4Element) {
-        //     const match = h4Element.textContent.match(/Orders?\s+([^:]+):/i);
-        //     if (match) return match[1].trim();
-        // }
-
         return '';
     }
 
@@ -315,9 +324,11 @@
         // Only fill the form after comment is successfully posted
         showNotification('Original address saved as comment', true);
 
-        // Get current last name and append order number
+        // Get current last name and append purchase order number
         const lastNameField = document.getElementById('address_last_name');
-        const modifiedLastName = `${lastNameField.value} ${orderNumber}`;
+        const purchaseOrderNumber = getPurchaseOrderNumber();
+        const modifiedLastName = `${lastNameField.value} ${purchaseOrderNumber}`;
+        console.log('[Duoplane Prefill] Purchase Order Number:', purchaseOrderNumber);
 
         // Map of field IDs to values from selected address
         const fieldValues = {
