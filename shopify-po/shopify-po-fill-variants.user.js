@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shopify PO Fill Variants
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Add "Fill All Variants" button to apply same quantity and cost to all variants of a product on Shopify PO creation page
 // @match        https://admin.shopify.com/store/*/purchase_orders*
 // @grant        none
@@ -11,22 +11,43 @@
   'use strict';
 
   const BUTTON_MARKER = 'data-fill-variants-btn';
-  const ROW_SELECTOR = 'tr[class*="PurchaseOrderLineItem"]';
+  const LEGACY_ROW_SELECTOR = 'tr[class*="PurchaseOrderLineItem"]';
+  const PRODUCT_LINK_SELECTOR = 's-internal-link[href*="/products/"]';
   const PRODUCT_CELL_SELECTOR = 'td[class*="ItemDetails"]';
   const QUANTITY_CELL_SELECTOR = 'td[class*="Received"]';
   const COST_CELL_SELECTOR = 'td[class*="Cost"]';
+  const NEW_GRID_ROW_SELECTOR = '.Polaris-InlineGrid';
 
   /**
    * Set an input value in a React-compatible way.
    */
   function setReactInputValue(input, value) {
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value'
-    ).set;
+    const prototype =
+      input instanceof HTMLTextAreaElement
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+    const nativeSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
     nativeSetter.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+  }
+
+  /**
+   * Get the editable control from Shopify's open-shadow text field.
+   */
+  function queryTextFieldInput(field) {
+    return (
+      field.shadowRoot?.querySelector('input, textarea') ||
+      field.querySelector('input:not([aria-label="Tax"]), textarea')
+    );
+  }
+
+  /**
+   * Get the input inside Shopify's newer custom text field.
+   */
+  function getTextFieldInput(row, label) {
+    const field = row.querySelector(`s-internal-text-field[label="${label}"]`);
+    return field ? queryTextFieldInput(field) : null;
   }
 
   /**
@@ -34,7 +55,7 @@
    * Href format: /store/{store}/products/{PRODUCT_ID}/variants/{VARIANT_ID}
    */
   function getProductId(row) {
-    const link = row.querySelector('s-internal-link[href*="/products/"]');
+    const link = row.querySelector(PRODUCT_LINK_SELECTOR);
     if (!link) return null;
     const match = link.getAttribute('href').match(/\/products\/(\d+)/);
     return match ? match[1] : null;
@@ -44,6 +65,9 @@
    * Get the quantity input from a row.
    */
   function getQuantityInput(row) {
+    const newFieldInput = getTextFieldInput(row, 'Quantity');
+    if (newFieldInput) return newFieldInput;
+
     const cell = row.querySelector(QUANTITY_CELL_SELECTOR);
     return cell ? cell.querySelector('input[type="number"]') : null;
   }
@@ -52,6 +76,9 @@
    * Get the cost input from a row.
    */
   function getCostInput(row) {
+    const newFieldInput = getTextFieldInput(row, 'Cost');
+    if (newFieldInput) return newFieldInput;
+
     const cell = row.querySelector(COST_CELL_SELECTOR);
     if (!cell) return null;
     const largeScreen = cell.querySelector('span[class*="LargeScreen"] input');
@@ -59,11 +86,39 @@
   }
 
   /**
+   * Find editable PO line item rows in both the old table UI and Shopify's
+   * newer grid built with custom text field elements.
+   */
+  function getLineItemRows() {
+    const rows = Array.from(document.querySelectorAll(LEGACY_ROW_SELECTOR));
+
+    document.querySelectorAll(PRODUCT_LINK_SELECTOR).forEach((link) => {
+      const row = link.closest(NEW_GRID_ROW_SELECTOR);
+      if (!row || rows.includes(row)) return;
+      if (!getQuantityInput(row) && !getCostInput(row)) return;
+      rows.push(row);
+    });
+
+    return rows;
+  }
+
+  /**
+   * Find a stable place to attach the button for the row.
+   */
+  function getProductContainer(row) {
+    const legacyCell = row.querySelector(PRODUCT_CELL_SELECTOR);
+    if (legacyCell) return legacyCell;
+
+    const link = row.querySelector(PRODUCT_LINK_SELECTOR);
+    return link?.parentElement || null;
+  }
+
+  /**
    * Group table rows by product ID.
    * Returns a Map of productId -> [row, row, ...]
    */
   function groupRowsByProduct() {
-    const rows = document.querySelectorAll(ROW_SELECTOR);
+    const rows = getLineItemRows();
     const groups = new Map();
     rows.forEach((row) => {
       const productId = getProductId(row);
@@ -108,8 +163,7 @@
       e.stopPropagation();
 
       // Re-query rows fresh at click time to avoid stale React DOM references
-      const allRows = document.querySelectorAll(ROW_SELECTOR);
-      const productRows = Array.from(allRows).filter(
+      const productRows = getLineItemRows().filter(
         (row) => getProductId(row) === productId
       );
       if (productRows.length < 2) return;
@@ -152,7 +206,7 @@
       if (rows.length < 2) return;
 
       const firstRow = rows[0];
-      const productCell = firstRow.querySelector(PRODUCT_CELL_SELECTOR);
+      const productCell = getProductContainer(firstRow);
       if (!productCell) return;
 
       // Don't add duplicate buttons
