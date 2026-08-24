@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         QC Order to ShipStation
 // @namespace    vapordna-qc-shipstation
-// @version      1.0.2
-// @description  Sends the open QC order number to ShipStation, searches for it, and opens the exact result.
+// @version      2.1.0
+// @description  Finds the QC order in ShipStation Scan and verifies all its items.
 // @match        https://vapordna.limitlessdigitaltech.com/inventory/order*
-// @match        https://ship14.shipstation.com/orders*
+// @match        https://ship14.shipstation.com/scan*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addValueChangeListener
@@ -16,7 +16,6 @@
 
     const MESSAGE_KEY = 'qc-order-message';
     const MAX_MESSAGE_AGE_MS = 2 * 60 * 1000;
-    const RESULT_TIMEOUT_MS = 20 * 1000;
     const log = (...values) => console.log('[QC → ShipStation]', ...values);
 
     if (location.hostname === 'vapordna.limitlessdigitaltech.com') {
@@ -91,7 +90,7 @@
 
     async function searchAndOpenOrder(orderNumber, signal) {
         const input = await waitForElement(
-            'input[name="searchTerm"][placeholder="Search Orders..."]',
+            '#scan-search-box',
             15 * 1000,
             signal,
         );
@@ -99,30 +98,36 @@
         setReactInputValue(input, orderNumber);
         input.focus();
 
-        // ShipStation's search control is type="button" and has its own React
-        // click handler, so submitting the surrounding form does not search.
+        // The Scan page's Find Shipment control is type="button" and has its
+        // own React click handler, so click that specific adjacent control.
         await delay(100);
         const form = input.closest('form');
         const searchButton = form?.querySelector('button[type="button"]');
         if (searchButton) {
             searchButton.click();
-        } else if (form?.requestSubmit) {
-            form.requestSubmit();
         } else {
-            throw new Error('ShipStation search button was not found.');
+            throw new Error('ShipStation Find Shipment button was not found.');
         }
 
-        log('Searching for', orderNumber);
+        log('Submitted order to Scan', orderNumber);
 
-        const resultButton = await waitForExactOrderResult(
-            orderNumber,
-            RESULT_TIMEOUT_MS,
+        // Do not use a generic delay here: the old shipment can remain visible
+        // while ShipStation loads the new one. Wait for the exact order header.
+        await waitForTextButton(orderNumber, null, 20 * 1000, signal);
+        const verifyAllButton = await waitForTextButton(
+            'Verify All',
+            '#verify-item-list',
+            15 * 1000,
             signal,
         );
 
-        resultButton.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        resultButton.click();
-        log('Opened order', orderNumber);
+        await delay(100);
+        if (signal?.aborted) {
+            throw new DOMException('Search superseded.', 'AbortError');
+        }
+
+        verifyAllButton.click();
+        log('Clicked Verify All for', orderNumber);
     }
 
     function setReactInputValue(input, value) {
@@ -145,41 +150,40 @@
         input.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    function findExactOrderResult(orderNumber) {
-        const expected = orderNumber.toLowerCase();
-        const buttons = document.querySelectorAll(
-            '[data-column="order-number"][data-row-id] button',
-        );
+    function findTextButton(text, rootSelector) {
+        const root = rootSelector ? document.querySelector(rootSelector) : document;
+        if (!root) return null;
 
-        return [...buttons].find((button) => {
-            return normalizeOrderNumber(button.textContent)?.toLowerCase() === expected;
+        const expected = text.trim().toLowerCase();
+        return [...root.querySelectorAll('button')].find((button) => {
+            return !button.disabled && button.textContent.trim().toLowerCase() === expected;
         }) ?? null;
     }
 
-    function waitForExactOrderResult(orderNumber, timeoutMs, signal) {
+    function waitForTextButton(text, rootSelector, timeoutMs, signal) {
         return new Promise((resolve, reject) => {
             if (signal?.aborted) {
                 reject(new DOMException('Search superseded.', 'AbortError'));
                 return;
             }
 
-            const existing = findExactOrderResult(orderNumber);
+            const existing = findTextButton(text, rootSelector);
             if (existing) {
                 resolve(existing);
                 return;
             }
 
             const observer = new MutationObserver(() => {
-                const result = findExactOrderResult(orderNumber);
-                if (!result) return;
+                const button = findTextButton(text, rootSelector);
+                if (!button) return;
 
                 cleanup();
-                resolve(result);
+                resolve(button);
             });
 
             const timeout = setTimeout(() => {
                 cleanup();
-                reject(new Error(`Timed out waiting for order ${orderNumber}.`));
+                reject(new Error(`Timed out waiting for button: ${text}.`));
             }, timeoutMs);
 
             const handleAbort = () => {
