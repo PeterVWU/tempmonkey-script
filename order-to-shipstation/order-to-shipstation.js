@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         QC Order to ShipStation
 // @namespace    vapordna-qc-shipstation
-// @version      2.1.0
-// @description  Finds the QC order in ShipStation Scan and verifies all its items.
+// @version      2.4.0
+// @description  Finds a QC order in ShipStation Orders or Scan and opens it for processing.
 // @match        https://vapordna.limitlessdigitaltech.com/inventory/order*
-// @match        https://ship14.shipstation.com/scan*
+// @match        https://nv02.limitlessdigitaltech.com/inventory/order*
+// @match        https://*.shipstation.com/scan*
+// @match        https://*.shipstation.com/orders*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addValueChangeListener
@@ -18,12 +20,17 @@
     const MAX_MESSAGE_AGE_MS = 2 * 60 * 1000;
     const log = (...values) => console.log('[QC → ShipStation]', ...values);
 
-    if (location.hostname === 'vapordna.limitlessdigitaltech.com') {
+    const qcHostnames = new Set([
+        'vapordna.limitlessdigitaltech.com',
+        'nv02.limitlessdigitaltech.com',
+    ]);
+
+    if (qcHostnames.has(location.hostname)) {
         publishQcOrder();
         return;
     }
 
-    if (location.hostname === 'ship14.shipstation.com') {
+    if (location.hostname.endsWith('.shipstation.com')) {
         startShipStationReceiver();
     }
 
@@ -33,8 +40,9 @@
     }
 
     function publishQcOrder() {
-        // The order detail page displays its primary order number in this H1.
-        const heading = document.querySelector('.wl-detail h1.wl-mono');
+        // The original site wraps the heading in .wl-detail; NV02 does not.
+        const heading = document.querySelector('.wl-detail h1.wl-mono')
+            ?? document.querySelector('h1.wl-mono');
         const orderNumber = normalizeOrderNumber(heading?.textContent);
 
         if (!orderNumber) {
@@ -89,6 +97,47 @@
     }
 
     async function searchAndOpenOrder(orderNumber, signal) {
+        if (location.pathname.startsWith('/orders')) {
+            await searchAndOpenOrderFromOrdersPage(orderNumber, signal);
+            return;
+        }
+
+        await searchAndOpenOrderFromScanPage(orderNumber, signal);
+    }
+
+    async function searchAndOpenOrderFromOrdersPage(orderNumber, signal) {
+        const input = await waitForElement(
+            'input[name="searchTerm"][placeholder="Search Orders..."]',
+            15 * 1000,
+            signal,
+        );
+
+        setReactInputValue(input, orderNumber);
+        input.focus();
+
+        // Orders uses a type="button" search control with its own React click
+        // handler, so submitting the surrounding form does not start a search.
+        const form = input.closest('form');
+        const searchButton = form?.querySelector('button[type="button"]');
+        if (!searchButton) {
+            throw new Error('ShipStation Orders search button was not found.');
+        }
+
+        await delay(100);
+        searchButton.click();
+        log('Submitted order to Orders', orderNumber);
+
+        const orderButton = await waitForOrderResult(orderNumber, 20 * 1000, signal);
+        await delay(100);
+        if (signal?.aborted) {
+            throw new DOMException('Search superseded.', 'AbortError');
+        }
+
+        orderButton.click();
+        log('Opened order from Orders', orderNumber);
+    }
+
+    async function searchAndOpenOrderFromScanPage(orderNumber, signal) {
         const input = await waitForElement(
             '#scan-search-box',
             15 * 1000,
@@ -128,6 +177,56 @@
 
         verifyAllButton.click();
         log('Clicked Verify All for', orderNumber);
+    }
+
+    function findOrderResult(orderNumber) {
+        return [...document.querySelectorAll('[data-column="order-number"] button')]
+            .find((button) => {
+                return !button.disabled
+                    && normalizeOrderNumber(button.textContent) === orderNumber;
+            }) ?? null;
+    }
+
+    function waitForOrderResult(orderNumber, timeoutMs, signal) {
+        return new Promise((resolve, reject) => {
+            if (signal?.aborted) {
+                reject(new DOMException('Search superseded.', 'AbortError'));
+                return;
+            }
+
+            const existing = findOrderResult(orderNumber);
+            if (existing) {
+                resolve(existing);
+                return;
+            }
+
+            const observer = new MutationObserver(() => {
+                const button = findOrderResult(orderNumber);
+                if (!button) return;
+
+                cleanup();
+                resolve(button);
+            });
+
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timed out waiting for order result: ${orderNumber}.`));
+            }, timeoutMs);
+
+            const handleAbort = () => {
+                cleanup();
+                reject(new DOMException('Search superseded.', 'AbortError'));
+            };
+
+            const cleanup = () => {
+                clearTimeout(timeout);
+                observer.disconnect();
+                signal?.removeEventListener('abort', handleAbort);
+            };
+
+            observer.observe(document.body, { childList: true, subtree: true });
+            signal?.addEventListener('abort', handleAbort, { once: true });
+        });
     }
 
     function setReactInputValue(input, value) {
