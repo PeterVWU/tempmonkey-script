@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QC Order to ShipStation
 // @namespace    vapordna-qc-shipstation
-// @version      2.5.0
+// @version      2.6.1
 // @description  Finds a QC order in ShipStation Orders or Scan and opens it for processing.
 // @match        https://vapordna.limitlessdigitaltech.com/inventory/order*
 // @match        https://nv02.limitlessdigitaltech.com/inventory/order*
@@ -132,7 +132,7 @@
         searchButton.click();
         log('Submitted order to Orders', orderNumber);
 
-        const orderButton = await waitForOrderResult(orderNumber, 20 * 1000, signal);
+        const orderButton = await waitForOrderResult(orderNumber, 60 * 1000, signal);
         await delay(100);
         if (signal?.aborted) {
             throw new DOMException('Search superseded.', 'AbortError');
@@ -140,6 +140,22 @@
 
         orderButton.click();
         log('Opened order from Orders', orderNumber);
+
+        await waitForScaleButton(30 * 1000, signal);
+        // The order canvas animates and may replace its controls once while
+        // loading. Let it settle, then resolve the live Scale button again.
+        await delay(500);
+        if (signal?.aborted) {
+            throw new DOMException('Search superseded.', 'AbortError');
+        }
+
+        const scaleButton = findScaleButton();
+        if (!scaleButton) {
+            throw new Error('ShipStation Scale button disappeared before clicking.');
+        }
+
+        scaleButton.click();
+        log('Clicked Scale for', orderNumber);
     }
 
     async function searchAndOpenOrderFromScanPage(orderNumber, signal) {
@@ -229,7 +245,68 @@
                 signal?.removeEventListener('abort', handleAbort);
             };
 
-            observer.observe(document.body, { childList: true, subtree: true });
+            observer.observe(document.body, {
+                childList: true,
+                characterData: true,
+                subtree: true,
+            });
+            signal?.addEventListener('abort', handleAbort, { once: true });
+        });
+    }
+
+    function findScaleButton() {
+        return [...document.querySelectorAll('button[class*="scale-button-"]')]
+            .find((button) => {
+                return !button.disabled
+                    && button.isConnected
+                    && button.getClientRects().length > 0
+                    && button.textContent.trim().toLowerCase() === 'scale'
+                    && button.querySelector('svg[data-icon="weight-scale"]');
+            }) ?? null;
+    }
+
+    function waitForScaleButton(timeoutMs, signal) {
+        return new Promise((resolve, reject) => {
+            if (signal?.aborted) {
+                reject(new DOMException('Search superseded.', 'AbortError'));
+                return;
+            }
+
+            const existing = findScaleButton();
+            if (existing) {
+                resolve(existing);
+                return;
+            }
+
+            const observer = new MutationObserver(() => {
+                const button = findScaleButton();
+                if (!button) return;
+
+                cleanup();
+                resolve(button);
+            });
+
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error('Timed out waiting for the ShipStation Scale button.'));
+            }, timeoutMs);
+
+            const handleAbort = () => {
+                cleanup();
+                reject(new DOMException('Search superseded.', 'AbortError'));
+            };
+
+            const cleanup = () => {
+                clearTimeout(timeout);
+                observer.disconnect();
+                signal?.removeEventListener('abort', handleAbort);
+            };
+
+            observer.observe(document.body, {
+                attributes: true,
+                childList: true,
+                subtree: true,
+            });
             signal?.addEventListener('abort', handleAbort, { once: true });
         });
     }
