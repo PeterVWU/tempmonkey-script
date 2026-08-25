@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QC Order to ShipStation
 // @namespace    vapordna-qc-shipstation
-// @version      2.6.1
+// @version      2.7.0
 // @description  Finds a QC order in ShipStation Orders or Scan and opens it for processing.
 // @match        https://vapordna.limitlessdigitaltech.com/inventory/order*
 // @match        https://nv02.limitlessdigitaltech.com/inventory/order*
@@ -17,6 +17,7 @@
     'use strict';
 
     const MESSAGE_KEY = 'qc-order-message';
+    const LAST_HANDLED_ORDER_KEY = 'qc-last-handled-order';
     const MAX_MESSAGE_AGE_MS = 2 * 60 * 1000;
     const log = (...values) => console.log('[QC → ShipStation]', ...values);
 
@@ -81,6 +82,17 @@
             if (!orderNumber) return;
 
             lastHandledSentAt = message.sentAt;
+            const lastHandledOrder = normalizeOrderNumber(
+                GM_getValue(LAST_HANDLED_ORDER_KEY, null),
+            );
+            if (orderNumber === lastHandledOrder) {
+                log('Ignored duplicate order', orderNumber);
+                return;
+            }
+
+            // Persist before starting any UI work so refreshes and other
+            // ShipStation tabs cannot restart automation for the same order.
+            GM_setValue(LAST_HANDLED_ORDER_KEY, orderNumber);
             activeSearchController?.abort();
             activeSearchController = new AbortController();
 
