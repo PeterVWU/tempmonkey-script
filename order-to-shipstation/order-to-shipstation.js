@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QC Order to ShipStation
 // @namespace    vapordna-qc-shipstation
-// @version      2.7.0
+// @version      2.7.1
 // @description  Finds a QC order in ShipStation Orders or Scan and opens it for processing.
 // @match        https://vapordna.limitlessdigitaltech.com/inventory/order*
 // @match        https://nv02.limitlessdigitaltech.com/inventory/order*
@@ -43,11 +43,14 @@
     function publishQcOrder() {
         // QC pages expose the number on their copy control, while order detail
         // pages display it in an H1 (with different wrappers on each site).
-        const copyOrderButton = document.querySelector('[data-copy-order-number]');
+        const copyOrderButton = document.querySelector(
+            '[title="Copy order number"], [aria-label="Copy order number"]',
+        );
         const heading = document.querySelector('.wl-detail h1.wl-mono')
             ?? document.querySelector('h1.wl-mono');
         const orderNumber = normalizeOrderNumber(
             copyOrderButton?.getAttribute('data-copy-order-number')
+                ?? copyOrderButton?.getAttribute('data-copy-value')
                 ?? heading?.textContent,
         );
 
